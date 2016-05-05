@@ -4,8 +4,8 @@ DEFAULT_OPT_TAGS="untagged,provision,environment,undercloud-scripts,overcloud-sc
 
 : ${OPT_BOOTSTRAP:=0}
 : ${OPT_SYSTEM_PACKAGES:=0}
-: ${OPT_WORKDIR:=$HOME/.quickstart}
 : ${OPT_TAGS:=$DEFAULT_OPT_TAGS}
+: ${REQUIREMENTS:=requirements.txt}
 
 install_deps () {
     yum -y install \
@@ -80,43 +80,29 @@ bootstrap () {
     virtualenv $( [ "$OPT_SYSTEM_PACKAGES" = 1 ] && printf -- "--system-site-packages\n" ) $OPT_WORKDIR
     . $OPT_WORKDIR/bin/activate
 
-    if [ "$OPT_NO_CLONE" != 1 ]; then
-        if ! [ -d "$OPT_WORKDIR/tripleo-quickstart" ]; then
-            echo "Cloning tripleo-quickstart repository..."
-            git clone https://github.com/openstack/tripleo-quickstart.git \
-                $OPT_WORKDIR/tripleo-quickstart
-        fi
+    echo "source $OPT_WORKDIR/bin/activate"
+    source $OPT_WORKDIR/bin/activate
+    python setup.py install
+    pip install -r $REQUIREMENTS
 
-        cd $OPT_WORKDIR/tripleo-quickstart
-        if [ -n "$OPT_GERRIT" ]; then
-            git review -d "$OPT_GERRIT"
-        else
-            git remote update
-            git checkout --quiet origin/master
-        fi
-    fi
-
-    pip install -r requirements.txt
     )
-}
-
-activate_venv() {
-    . $OPT_WORKDIR/bin/activate
 }
 
 usage () {
     echo "$0: usage: $0 [options] virthost [release]"
     echo "$0: usage: sudo $0 --install-deps"
     echo "$0: options:"
-    echo "    --system-site-packages"
-    echo "    --ansible-debug"
-    echo "    --bootstrap"
-    echo "    --working-dir <directory>"
-    echo "    --undercloud-image-url <url>"
-    echo "    --tags <tag1>[,<tag2>,...]"
-    echo "    --skip-tags <tag1>,[<tag2>,...]"
-    echo "    --config <file>"
-    echo "    --print-logo"
+    echo "    -s, --system-site-packages                Use system site packages"
+    echo "    -v, --ansible-debug                       Invoke Ansible with -vvvv"
+    echo "    -b, --bootstrap                           default: true, create python virtual environment and setup"
+    echo "    -w, --working-dir <directory>             default: $PWD/.quickstart, the directory from which ansible reads the playbook and config"
+    echo "    -p, --playbook <playbook name>            default: 'tripleo', the playbook that will be invoked"
+    echo "    -z, --requirements <requirements file>    default: 'requirements.txt', the requirments file"
+    echo "    -r, --release <release>                   default: 'mitaka', the release of tripleo to deploy"
+    echo "    -t, --tags <tag1>[,<tag2>,...]                default: untagged,provision,environment,undercloud-scripts,overcloud-scripts, ansible tags"
+    echo "    --skip-tags <tag1>,[<tag2>,...]           default: 'none', ansible skip-tags"
+    echo "    -c, --config <file>                           default: '$OPT_WORKDIR/config/minimal', Just enough for a minimal tripleo install"
+    echo "    --print-logo                              Print the tripleo logo, WOOT"
 
 }
 
@@ -127,8 +113,23 @@ while [ "x$1" != "x" ]; do
             OPT_INSTALL_DEPS=1
             ;;
 
+        --playbook|-p)
+            PLAYBOOK=$2
+            shift
+            ;;
+
+        --requirements|-z)
+            REQUIREMENTS=$2
+            shift
+            ;;
+
         --system-site-packages|-s)
             OPT_SYSTEM_PACKAGES=1
+            ;;
+
+        --release|-r)
+            RELEASE=$2
+            shift
             ;;
 
         --bootstrap|-b)
@@ -141,11 +142,6 @@ while [ "x$1" != "x" ]; do
 
         --working-dir|-w)
             OPT_WORKDIR=$2
-            shift
-            ;;
-
-        --undercloud-image-url|-u)
-            OPT_UNDERCLOUD_URL=$2
             shift
             ;;
 
@@ -208,16 +204,8 @@ if [ "$PRINT_LOGO" = 1 ]; then
     exit 1
 fi
 
-
-if [ "$OPT_NO_CLONE" = 1 ]; then
-    OOOQ_DIR=.
-else
-    OOOQ_DIR=$OPT_WORKDIR/tripleo-quickstart
-fi
-
 # Set this default after option processing, because the default depends
 # on another option.
-: ${OPT_CONFIG:=$OOOQ_DIR/playbooks/centosci/minimal.yml}
 
 if [ "$OPT_INSTALL_DEPS" = 1 ]; then
     echo "NOTICE: installing dependencies"
@@ -237,27 +225,44 @@ if [ "$#" -gt 2 ]; then
 fi
 
 VIRTHOST=$1
-RELEASE=$2
+if [[ $VIRTHOST == "localhost" ]];then
+    echo "Detected localhost, will use 127.0.0.2 as localhost is reserved by ansible"
+    export VIRTHOST=127.0.0.2;
+fi
 
-# We use $RELEASE to build the undercloud image URL. It is also passed to the
-# quickstart playbook, since there are now some version specific behaviors.
-# If the user has provided an explicit URL, we should warn them of that
-# fact.
-if [ -z "$RELEASE" ] && [ -n "$OPT_UNDERCLOUD_URL" ]; then
-    
-    RELEASE=mitaka
-
-    echo "WARNING: The release defaults to $RELEASE, but you have" >&2
-    echo "         provided an explicit undercloud image URL. If" >&2
-    echo "         that image is not for $RELEASE, this may not work" >&2
-
-elif [ -z "$RELEASE" ] && [ -z "$OPT_UNDERCLOUD_URL" ]; then
+if [ -z "$RELEASE" ]; then
     RELEASE=mitaka
 fi
 
-# we use this only if --undercloud-image-url was not provided on the
-# command line.
-: ${OPT_UNDERCLOUD_URL:=http://artifacts.ci.centos.org/artifacts/rdo/images/${RELEASE}/delorean/stable/undercloud.qcow2}
+if [ -z "$PLAYBOOK" ]; then
+    PLAYBOOK=quickstart
+fi
+
+#Detect and setup directory
+if [[ $PWD == *"tripleo-quickstart" ]]; then
+    echo " I see you have already cloned the quickstart repo"
+else
+    echo "The tripleo-quickstart repo has not been detected in the path"
+    if [ "$OPT_NO_CLONE" != 1 ]; then
+        if ! [ -d "tripleo-quickstart" ]; then
+            echo "Cloning tripleo-quickstart repository..."
+            git clone https://github.com/openstack/tripleo-quickstart.git \
+                tripleo-quickstart
+        fi
+
+        cd $PWD/tripleo-quickstart
+        if [ -n "$OPT_GERRIT" ]; then
+            git review -d "$OPT_GERRIT"
+        else
+            git remote update
+            git checkout --quiet origin/master
+        fi
+    fi
+
+fi
+OPT_WORKDIR=$PWD/.quickstart
+echo "Local Working Directory $OPT_WORKDIR"
+
 
 print_logo
 echo "Installing OpenStack ${RELEASE:+"$RELEASE "}on host $VIRTHOST"
@@ -274,11 +279,9 @@ if [ "$OPT_BOOTSTRAP" = 1 ] || ! [ -f "$OPT_WORKDIR/bin/activate" ]; then
     fi
 fi
 
-activate_venv
 
 set -ex
 
-export ANSIBLE_CONFIG=$OOOQ_DIR/ansible.cfg
 export ANSIBLE_INVENTORY=$OPT_WORKDIR/hosts
 
 if [ "$VIRTHOST" = "localhost" ]; then
@@ -295,13 +298,28 @@ else
     VERBOSITY=vv
 fi
 
-ansible-playbook -$VERBOSITY $OOOQ_DIR/playbooks/quickstart.yml \
-    -e @$OPT_CONFIG \
+# source the virtual environment
+source $OPT_WORKDIR/bin/activate
+
+# set a default topologyconfiguration if required
+: ${OPT_CONFIG:=$OPT_WORKDIR/config/general_config/minimal.yml}
+
+# use exported ansible variables
+source $OPT_WORKDIR/../ansible_env
+env | grep ANSIBLE
+echo " "; echo " "
+
+echo "Installing OpenStack ${RELEASE:+"$RELEASE "}on host $VIRTHOST"
+echo "Executing Ansible..."
+echo ""
+set -x
+
+ansible-playbook -$VERBOSITY $OPT_WORKDIR/playbooks/$PLAYBOOK.yml \
     -e ansible_python_interpreter=/usr/bin/python \
-    -e image_url=$OPT_UNDERCLOUD_URL \
+    -e @$OPT_WORKDIR/config/release/$RELEASE.yml \
     -e local_working_dir=$OPT_WORKDIR \
     -e virthost=$VIRTHOST \
-    -e release=$RELEASE \
+    -e @$OPT_CONFIG \
     ${OPT_TAGS:+-t $OPT_TAGS} \
     ${OPT_SKIP_TAGS:+--skip-tags $OPT_SKIP_TAGS}
 
@@ -344,4 +362,20 @@ Then continue with the instructions (limit content using dropdown on the left):
 Virtual Environment Setup Complete
 ##################################
 EOF
+if [ $OPT_TAGS != $DEFAULT_OPT_TAGS ] ; then
+
+cat <<EOF
+##################################
+Virtual Environment Setup Complete
+##################################
+
+Logs of the deployment are available on the undercloud node in /home/stack
+
+Access the undercloud by:
+
+    ssh -F $OPT_WORKDIR/ssh.config.ansible undercloud
+EOF
 fi
+
+
+

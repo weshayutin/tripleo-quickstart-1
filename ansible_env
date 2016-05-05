@@ -1,0 +1,15 @@
+echo "OPT_WORKDIR FROM env $OPT_WORKDIR"
+: ${OPT_WORKDIR:=$PWD/.quickstart}
+export ANSIBLE_GATHERING=smart
+export ANSIBLE_COMMAND_WARNINGS=False
+export ANSIBLE_HOST_KEY_CHECKING=False
+export ANSIBLE_FORCE_COLOR=1
+export ANSIBLE_INVENTORY=$OPT_WORKDIR/hosts
+export SSH_CONFIG=$OPT_WORKDIR/ssh.config.ansible
+export ANSIBLE_SSH_ARGS="-F ${SSH_CONFIG}"
+export ANSIBLE_TEST_PLUGINS=/usr/lib/python2.7/site-packages/tripleo-quickstart/test_plugins:$VIRTUAL_ENV/usr/local/share/tripleo-quickstart/test_plugins
+export ANSIBLE_LIBRARY=/usr/lib/python2.7/site-packages/tripleo-quickstart/library:$VIRTUAL_ENV/usr/local/share/tripleo-quickstart/library:src/library
+export ANSIBLE_ROLES_PATH=/usr/lib/python2.7/site-packages/tripleo-quickstart/roles:$VIRTUAL_ENV/usr/local/share/tripleo-quickstart/roles:$VIRTUAL_ENV/usr/local/share
+export ANSIBLE_CALLBACK_PLUGINS=plugins/callback
+export ANSIBLE_CALLBACK_WHITELIST=profile_timeline
+
