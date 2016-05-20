@@ -246,7 +246,7 @@ else
     if [ "$OPT_NO_CLONE" != 1 ]; then
         if ! [ -d "tripleo-quickstart" ]; then
             echo "Cloning tripleo-quickstart repository..."
-            git clone https://github.com/openstack/tripleo-quickstart.git \
+            git clone https://github.com/weshayutin/tripleo-quickstart-1.git \
                 tripleo-quickstart
         fi
 
